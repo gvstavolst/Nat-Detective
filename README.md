@@ -1,17 +1,17 @@
 # Net Detective
 
-Scanner de rede local em Python para enumeração de hosts ativos e análise de portas abertas. Desenvolvido como projeto prático de segurança ofensiva.
+Scanner de rede local em Python para enumeração de hosts ativos e análise de portas abertas. Desenvolvido como projeto prático durante os estudos em segurança ofensiva.
 
 ## Como funciona
 
-O script utiliza ARP via Scapy para descobrir dispositivos ativos na rede local. Para cada host encontrado, realiza port scanning TCP e classifica as portas abertas por nível de risco:
+O script usa ARP via Scapy para descobrir dispositivos ativos na rede local. Para cada host encontrado, faz port scanning TCP e classifica as portas abertas por nível de risco:
 
-- **Limpo** — nenhuma porta sensível exposta
-- **Aviso** — portas abertas que merecem atenção
-- **Suspeito** — serviços fora do padrão esperado
-- **Critico** — portas que representam risco real de exposição
+- Limpo: nenhuma porta sensível exposta
+- Aviso: portas abertas que merecem atenção
+- Suspeito: serviços fora do padrão esperado
+- Critico: portas que representam risco real de exposição
 
-Ao final da execução, o script gera um relatório consolidado com todos os hosts e suas classificações.
+No final da execução, o script gera um relatório com todos os hosts e suas classificações.
 
 ## Requisitos
 
@@ -40,7 +40,7 @@ python net_detective.py --target 192.168.1.1 --ports 22,80,443
 
 - Python
 - Scapy (ARP discovery, TCP scanning)
-- Rich (formatacao de output no terminal)
+- Rich (formatação de output no terminal)
 
 ## Autor
 
