@@ -1,0 +1,4 @@
+rich
+python-nmap
+requests
+scapy

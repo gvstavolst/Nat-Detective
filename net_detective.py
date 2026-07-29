@@ -2,16 +2,24 @@
 """
 net_detective.py
 
-Scanner de rede local: descobre hosts ativos via ping, realiza port scanning
-TCP e classifica cada porta aberta por nivel de risco.
+Scanner de rede local com modo pentest:
+  - Descobre hosts ativos via ping
+  - Port scanning TCP
+  - Banner grabbing
+  - Deteccao de versao de servico via nmap (python-nmap)
+  - Consulta automatica de CVEs via API NVD
+  - Sugestao de ferramentas e comandos por porta aberta
 
 Dependencias:
-    pip install rich scapy
+    pip install rich python-nmap requests scapy
+    sudo apt install nmap
 
 Uso:
     python net_detective.py
     python net_detective.py --target 192.168.1.0/24
     python net_detective.py --target 192.168.1.1 --ports 22,80,443
+    python net_detective.py --target 192.168.1.1 --pentest
+    python net_detective.py --target 192.168.1.1 --pentest --cve
 """
 
 import argparse
@@ -22,6 +30,18 @@ import sys
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+try:
+    import nmap as nmap_lib
+    HAS_NMAP = True
+except ImportError:
+    HAS_NMAP = False
 
 from rich import box
 from rich.console import Console
@@ -41,37 +61,197 @@ theme = Theme({
     "info":     "dim white",
     "label":    "cyan",
     "host_up":  "bold green",
+    "pentest":  "bold magenta",
+    "cve":      "bold red",
 })
 
 console = Console(theme=theme)
 
+# (servico, severidade, descricao, [ferramentas/comandos])
 PORT_INFO = {
-    21:    ("FTP",           "critical", "Transferencia sem criptografia."),
-    22:    ("SSH",           "clean",    "Acesso remoto seguro."),
-    23:    ("Telnet",        "critical", "Protocolo sem criptografia, credenciais em texto puro."),
-    25:    ("SMTP",          "warning",  "Servidor de e-mail exposto, verificar relay aberto."),
-    53:    ("DNS",           "warning",  "Resolver DNS visivel, checar queries externas."),
-    80:    ("HTTP",          "warning",  "Trafego sem HTTPS."),
-    110:   ("POP3",          "warning",  "E-mail sem criptografia."),
-    135:   ("RPC",           "suspect",  "RPC exposto, vetor comum em redes Windows."),
-    139:   ("NetBIOS",       "critical", "Compartilhamentos Windows visiveis na rede."),
-    143:   ("IMAP",          "warning",  "IMAP sem TLS, credenciais em texto puro."),
-    443:   ("HTTPS",         "clean",    "Trafego web criptografado."),
-    445:   ("SMB",           "critical", "SMB exposto, risco alto em redes nao segmentadas."),
-    1433:  ("MSSQL",         "critical", "SQL Server visivel na rede."),
-    1723:  ("PPTP",          "warning",  "Protocolo VPN considerado inseguro."),
-    2049:  ("NFS",           "warning",  "Compartilhamento NFS aberto."),
-    3000:  ("Dev/Node",      "warning",  "Porta tipica de servidor de desenvolvimento."),
-    3306:  ("MySQL",         "critical", "Banco de dados exposto diretamente na rede."),
-    3389:  ("RDP",           "suspect",  "Acesso remoto Windows exposto."),
-    4444:  ("Shell/MSF",     "critical", "Porta associada a shells reversos e Metasploit."),
-    5432:  ("PostgreSQL",    "critical", "Banco de dados exposto na rede."),
-    5900:  ("VNC",           "critical", "Acesso remoto de tela sem VPN."),
-    6379:  ("Redis",         "critical", "Redis sem autenticacao por padrao."),
-    8080:  ("HTTP-Alt",      "warning",  "Porta alternativa HTTP, checar se e painel admin."),
-    8443:  ("HTTPS-Alt",     "warning",  "HTTPS alternativo, aplicacao secundaria."),
-    9200:  ("Elasticsearch", "critical", "Elasticsearch sem auth, dados possivelmente expostos."),
-    27017: ("MongoDB",       "critical", "MongoDB historicamente sem senha por padrao."),
+    21:    ("FTP",           "critical",
+            "Transferencia sem criptografia.",
+            [
+                "nmap --script ftp-anon,ftp-bounce,ftp-syst {ip}",
+                "hydra -l admin -P /usr/share/wordlists/rockyou.txt ftp://{ip}",
+                "ftp {ip}  # tente login: anonymous / anonymous",
+            ]),
+    22:    ("SSH",           "clean",
+            "Acesso remoto seguro.",
+            [
+                "ssh-audit {ip}",
+                "nmap --script ssh-auth-methods,ssh-hostkey {ip} -p 22",
+                "hydra -l root -P /usr/share/wordlists/rockyou.txt ssh://{ip}",
+            ]),
+    23:    ("Telnet",        "critical",
+            "Protocolo sem criptografia, credenciais em texto puro.",
+            [
+                "telnet {ip}",
+                "hydra -l admin -P /usr/share/wordlists/rockyou.txt telnet://{ip}",
+                "nmap --script telnet-encryption,telnet-ntlm-info {ip} -p 23",
+            ]),
+    25:    ("SMTP",          "warning",
+            "Servidor de e-mail exposto, verificar relay aberto.",
+            [
+                "nmap --script smtp-open-relay,smtp-enum-users {ip} -p 25",
+                "nc {ip} 25  # EHLO / VRFY / EXPN",
+                "swaks --to test@example.com --server {ip}",
+            ]),
+    53:    ("DNS",           "warning",
+            "Resolver DNS visivel, checar zone transfer e queries externas.",
+            [
+                "dig axfr @{ip} <dominio>",
+                "nmap --script dns-zone-transfer,dns-recursion {ip} -p 53",
+                "fierce --dns-servers {ip} --domain <dominio>",
+            ]),
+    80:    ("HTTP",          "warning",
+            "Trafego sem HTTPS.",
+            [
+                "nikto -h http://{ip}",
+                "gobuster dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt",
+                "whatweb http://{ip}",
+                "curl -I http://{ip}",
+                "nmap --script http-title,http-headers,http-methods {ip} -p 80",
+            ]),
+    110:   ("POP3",          "warning",
+            "E-mail sem criptografia.",
+            [
+                "nc {ip} 110  # USER admin / PASS password",
+                "hydra -l admin -P /usr/share/wordlists/rockyou.txt pop3://{ip}",
+            ]),
+    135:   ("RPC",           "suspect",
+            "RPC exposto, vetor comum em redes Windows.",
+            [
+                "nmap --script msrpc-enum {ip} -p 135",
+                "rpcclient -U '' {ip}",
+            ]),
+    139:   ("NetBIOS",       "critical",
+            "Compartilhamentos Windows visiveis na rede.",
+            [
+                "nbtscan {ip}",
+                "enum4linux -a {ip}",
+                "nmap --script nbstat {ip} -p 139",
+            ]),
+    143:   ("IMAP",          "warning",
+            "IMAP sem TLS, credenciais em texto puro.",
+            [
+                "nc {ip} 143",
+                "hydra -l admin -P /usr/share/wordlists/rockyou.txt imap://{ip}",
+            ]),
+    443:   ("HTTPS",         "clean",
+            "Trafego web criptografado.",
+            [
+                "nikto -h https://{ip} -ssl",
+                "sslscan {ip}:443",
+                "gobuster dir -u https://{ip} -w /usr/share/wordlists/dirb/common.txt",
+                "nmap --script ssl-enum-ciphers,ssl-heartbleed {ip} -p 443",
+            ]),
+    445:   ("SMB",           "critical",
+            "SMB exposto, risco alto. Verifique EternalBlue (MS17-010).",
+            [
+                "nmap --script smb-vuln-ms17-010,smb-vuln-ms08-067,smb-enum-shares {ip} -p 445",
+                "enum4linux -a {ip}",
+                "crackmapexec smb {ip}",
+                "smbclient -L //{ip} -N",
+                "impacket-smbclient {ip}",
+            ]),
+    1433:  ("MSSQL",         "critical",
+            "SQL Server visivel na rede.",
+            [
+                "nmap --script ms-sql-info,ms-sql-empty-password {ip} -p 1433",
+                "hydra -l sa -P /usr/share/wordlists/rockyou.txt mssql://{ip}",
+                "crackmapexec mssql {ip}",
+            ]),
+    1723:  ("PPTP",          "warning",
+            "Protocolo VPN considerado inseguro.",
+            [
+                "nmap --script pptp-version {ip} -p 1723",
+            ]),
+    2049:  ("NFS",           "warning",
+            "Compartilhamento NFS aberto.",
+            [
+                "showmount -e {ip}",
+                "nmap --script nfs-ls,nfs-showmount,nfs-statfs {ip} -p 2049",
+                "mount -t nfs {ip}:/ /mnt/tmp",
+            ]),
+    3000:  ("Dev/Node",      "warning",
+            "Porta tipica de servidor de desenvolvimento.",
+            [
+                "curl http://{ip}:3000",
+                "nikto -h http://{ip}:3000",
+                "gobuster dir -u http://{ip}:3000 -w /usr/share/wordlists/dirb/common.txt",
+            ]),
+    3306:  ("MySQL",         "critical",
+            "Banco de dados exposto diretamente na rede.",
+            [
+                "nmap --script mysql-empty-password,mysql-info,mysql-databases {ip} -p 3306",
+                "hydra -l root -P /usr/share/wordlists/rockyou.txt mysql://{ip}",
+                "mysql -h {ip} -u root  # tente sem senha",
+            ]),
+    3389:  ("RDP",           "suspect",
+            "Acesso remoto Windows exposto. Verifique BlueKeep (CVE-2019-0708).",
+            [
+                "nmap --script rdp-vuln-ms12-020,rdp-enum-encryption {ip} -p 3389",
+                "crowbar -b rdp -s {ip}/32 -u administrator -C /usr/share/wordlists/rockyou.txt",
+                "xfreerdp /u:administrator /p:password /v:{ip}",
+            ]),
+    4444:  ("Shell/MSF",     "critical",
+            "Porta associada a shells reversos e Metasploit.",
+            [
+                "nc {ip} 4444  # checar shell ativo",
+                "nmap -sV {ip} -p 4444",
+            ]),
+    5432:  ("PostgreSQL",    "critical",
+            "Banco de dados exposto na rede.",
+            [
+                "nmap --script pgsql-brute {ip} -p 5432",
+                "hydra -l postgres -P /usr/share/wordlists/rockyou.txt postgres://{ip}",
+                "psql -h {ip} -U postgres  # tente sem senha",
+            ]),
+    5900:  ("VNC",           "critical",
+            "Acesso remoto de tela sem VPN.",
+            [
+                "nmap --script vnc-info,vnc-brute {ip} -p 5900",
+                "hydra -P /usr/share/wordlists/rockyou.txt vnc://{ip}",
+                "vncviewer {ip}",
+            ]),
+    6379:  ("Redis",         "critical",
+            "Redis sem autenticacao por padrao.",
+            [
+                "redis-cli -h {ip}",
+                "redis-cli -h {ip} INFO",
+                "redis-cli -h {ip} CONFIG GET *",
+                "redis-cli -h {ip} KEYS *",
+                "nmap --script redis-info {ip} -p 6379",
+            ]),
+    8080:  ("HTTP-Alt",      "warning",
+            "Porta alternativa HTTP, checar se e painel admin.",
+            [
+                "nikto -h http://{ip}:8080",
+                "gobuster dir -u http://{ip}:8080 -w /usr/share/wordlists/dirb/common.txt",
+                "curl -I http://{ip}:8080",
+            ]),
+    8443:  ("HTTPS-Alt",     "warning",
+            "HTTPS alternativo, aplicacao secundaria.",
+            [
+                "nikto -h https://{ip}:8443 -ssl",
+                "sslscan {ip}:8443",
+            ]),
+    9200:  ("Elasticsearch", "critical",
+            "Elasticsearch sem auth, dados possivelmente expostos.",
+            [
+                "curl http://{ip}:9200",
+                "curl http://{ip}:9200/_cat/indices",
+                "curl http://{ip}:9200/_cluster/health",
+                "nmap --script elasticsearch {ip} -p 9200",
+            ]),
+    27017: ("MongoDB",       "critical",
+            "MongoDB historicamente sem senha por padrao.",
+            [
+                "mongo {ip}:27017  # conectar sem senha",
+                "nmap --script mongodb-info,mongodb-databases {ip} -p 27017",
+                "mongosh --host {ip} --port 27017",
+            ]),
 }
 
 INSTABLE_ON_WORKSTATION = {4444, 6379, 9200, 27017, 2049, 135, 139, 445}
@@ -127,6 +307,70 @@ def grab_banner(ip: str, port: int, timeout: float = 1.0) -> str:
                 return ""
     except Exception:
         return ""
+
+
+def nmap_service_scan(ip: str, open_ports: list[int]) -> dict:
+    """Usa python-nmap para detectar versao de servico e OS."""
+    if not HAS_NMAP:
+        console.print("  [warning]python-nmap nao instalado. Instale: pip install python-nmap + sudo apt install nmap[/warning]")
+        return {}
+    try:
+        nm = nmap_lib.PortScanner()
+        port_str = ",".join(str(p) for p in open_ports)
+        console.print(f"  [info]Rodando nmap -sV -O em {ip} nas portas {port_str}...[/info]")
+        nm.scan(ip, port_str, arguments="-sV -O --version-intensity 5")
+        result = {}
+        if ip in nm.all_hosts():
+            host_data = nm[ip]
+            result["os"] = ""
+            if "osmatch" in host_data and host_data["osmatch"]:
+                result["os"] = host_data["osmatch"][0].get("name", "")
+            result["ports"] = {}
+            for proto in host_data.all_protocols():
+                for port in host_data[proto]:
+                    pdata = host_data[proto][port]
+                    result["ports"][port] = {
+                        "name":    pdata.get("name", ""),
+                        "product": pdata.get("product", ""),
+                        "version": pdata.get("version", ""),
+                        "extrainfo": pdata.get("extrainfo", ""),
+                    }
+        return result
+    except Exception as e:
+        console.print(f"  [warning]Erro no nmap scan: {e}[/warning]")
+        return {}
+
+
+def check_cves(service: str, version: str, max_results: int = 3) -> list[dict]:
+    """Consulta CVEs na API publica do NVD (National Vulnerability Database)."""
+    if not HAS_REQUESTS:
+        return []
+    if not service or not version:
+        return []
+    try:
+        query = f"{service} {version}".strip()
+        url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+        params = {"keywordSearch": query, "resultsPerPage": max_results}
+        r = requests.get(url, params=params, timeout=8)
+        if r.status_code == 200:
+            vulns = r.json().get("vulnerabilities", [])
+            result = []
+            for v in vulns:
+                cve = v.get("cve", {})
+                cve_id = cve.get("id", "")
+                desc_list = cve.get("descriptions", [])
+                desc = next((d["value"] for d in desc_list if d["lang"] == "en"), "")
+                metrics = cve.get("metrics", {})
+                score = ""
+                if "cvssMetricV31" in metrics:
+                    score = metrics["cvssMetricV31"][0]["cvssData"].get("baseScore", "")
+                elif "cvssMetricV2" in metrics:
+                    score = metrics["cvssMetricV2"][0]["cvssData"].get("baseScore", "")
+                result.append({"id": cve_id, "score": score, "desc": desc[:120]})
+            return result
+        return []
+    except Exception:
+        return []
 
 
 def print_header():
@@ -205,7 +449,7 @@ def scan_network(network: str) -> list[dict]:
     return active
 
 
-def scan_ports(hosts: list[dict], ports: list[int]) -> list[dict]:
+def scan_ports(hosts: list[dict], ports: list[int], pentest_mode: bool = False, cve_mode: bool = False) -> list[dict]:
     section("Port scanning")
 
     all_findings = []
@@ -234,6 +478,11 @@ def scan_ports(hosts: list[dict], ports: list[int]) -> list[dict]:
             if b:
                 banners[port] = b
 
+        # Nmap service scan (pentest mode)
+        nmap_data = {}
+        if pentest_mode:
+            nmap_data = nmap_service_scan(ip, open_ports)
+
         table = Table(box=box.SIMPLE, padding=(0, 1))
         table.add_column("Porta",   style="label", width=7, justify="right")
         table.add_column("Servico", width=14)
@@ -241,8 +490,13 @@ def scan_ports(hosts: list[dict], ports: list[int]) -> list[dict]:
         table.add_column("Observacao", style="info")
 
         for port in sorted(open_ports):
+            svc_version = ""
+            if nmap_data and "ports" in nmap_data and port in nmap_data["ports"]:
+                pd = nmap_data["ports"][port]
+                svc_version = f"{pd['product']} {pd['version']}".strip()
+
             if port in PORT_INFO:
-                svc, severity, comment = PORT_INFO[port]
+                svc, severity, comment, tools = PORT_INFO[port]
 
                 if port in INSTABLE_ON_WORKSTATION and severity != "critical":
                     severity = "critical"
@@ -256,22 +510,80 @@ def scan_ports(hosts: list[dict], ports: list[int]) -> list[dict]:
                 }.get(severity, severity)
 
                 note = comment
+                if svc_version:
+                    note += f" | Versao: {svc_version}"
                 if port in banners:
                     note += f"\n  Banner: {banners[port]}"
 
-                all_findings.append({"ip": ip, "port": port, "service": svc, "severity": severity})
+                all_findings.append({
+                    "ip": ip, "port": port, "service": svc,
+                    "severity": severity, "tools": tools,
+                    "version": svc_version,
+                })
             else:
                 badge = "[warning]DESCONHECIDA[/warning]"
                 svc   = "?"
                 note  = "Porta sem registro."
-                all_findings.append({"ip": ip, "port": port, "service": "desconhecido", "severity": "warning"})
+                if port in banners:
+                    note += f" Banner: {banners[port]}"
+                all_findings.append({
+                    "ip": ip, "port": port, "service": "desconhecido",
+                    "severity": "warning", "tools": [], "version": svc_version,
+                })
 
             table.add_row(str(port), svc, badge, note)
 
         console.print(table)
+
+        if nmap_data.get("os"):
+            console.print(f"  [info]OS detectado: {nmap_data['os']}[/info]")
+
+        # CVE lookup
+        if cve_mode and pentest_mode:
+            for finding in [f for f in all_findings if f["ip"] == ip]:
+                if finding["version"]:
+                    cves = check_cves(finding["service"], finding["version"])
+                    if cves:
+                        console.print(f"  [cve]CVEs encontrados para {finding['service']} {finding['version']}:[/cve]")
+                        for c in cves:
+                            console.print(f"    [cve]{c['id']}[/cve] [info](Score: {c['score']}) {c['desc']}[/info]")
+
         console.print()
 
     return all_findings
+
+
+def print_pentest_hints(findings: list[dict]):
+    """Exibe comandos prontos de pentest para cada porta aberta encontrada."""
+    section("Dicas de pentest")
+
+    if not findings:
+        console.print("  [info]Nenhuma porta para analisar.[/info]")
+        return
+
+    # Agrupa por IP
+    by_ip: dict[str, list] = {}
+    for f in findings:
+        by_ip.setdefault(f["ip"], []).append(f)
+
+    for ip, host_findings in by_ip.items():
+        console.print(f"\n[label]>>> {ip}[/label]")
+        for f in sorted(host_findings, key=lambda x: x["port"]):
+            tools = f.get("tools", [])
+            if not tools:
+                continue
+            severity = f["severity"]
+            badge = {
+                "clean":    "[clean]OK[/clean]",
+                "warning":  "[warning]AVISO[/warning]",
+                "suspect":  "[suspect]SUSPEITO[/suspect]",
+                "critical": "[critical]CRITICO[/critical]",
+            }.get(severity, severity)
+            console.print(f"  [label]Porta {f['port']}[/label] ({f['service']}) {badge}")
+            for cmd in tools:
+                cmd_formatted = cmd.replace("{ip}", ip)
+                console.print(f"    [pentest]$[/pentest] [info]{cmd_formatted}[/info]")
+        console.print()
 
 
 def detect_anomalies(hosts: list[dict], findings: list[dict]):
@@ -352,11 +664,17 @@ DEFAULT_PORTS = [
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Net Detective: scanner de rede e analise de portas.")
+    parser = argparse.ArgumentParser(
+        description="Net Detective: scanner de rede, analise de portas e assistente de pentest."
+    )
     parser.add_argument("--target", "-t", default=None,
                         help="Rede ou IP alvo. Ex: 192.168.1.0/24 ou 192.168.1.1")
     parser.add_argument("--ports", "-p", default=None,
                         help="Portas separadas por virgula. Ex: 22,80,443")
+    parser.add_argument("--pentest", action="store_true",
+                        help="Ativa modo pentest: nmap -sV, deteccao de OS e dicas de ferramentas.")
+    parser.add_argument("--cve", action="store_true",
+                        help="Consulta CVEs na NVD para cada servico/versao detectado (requer --pentest).")
     args = parser.parse_args()
 
     target = args.target or get_local_network()
@@ -370,15 +688,22 @@ def main():
             sys.exit(1)
 
     print_header()
-    console.print(f"[info]Alvo: {target} | {len(ports)} portas[/info]\n")
+
+    mode_str = "PENTEST" if args.pentest else "DISCOVERY"
+    cve_str  = " + CVE" if args.cve else ""
+    console.print(f"[info]Alvo: {target} | {len(ports)} portas | Modo: {mode_str}{cve_str}[/info]\n")
 
     hosts    = scan_network(target)
     if not hosts:
         console.print("[info]Nenhum host ativo encontrado.[/info]")
         sys.exit(0)
 
-    findings = scan_ports(hosts, ports)
+    findings = scan_ports(hosts, ports, pentest_mode=args.pentest, cve_mode=args.cve)
     detect_anomalies(hosts, findings)
+
+    if args.pentest:
+        print_pentest_hints(findings)
+
     print_summary(findings)
 
 
