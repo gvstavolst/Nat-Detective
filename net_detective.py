@@ -21,8 +21,8 @@ Uso:
     python net_detective.py --target 192.168.1.1 --pentest
     python net_detective.py --target 192.168.1.1 --pentest --cve
 
-AVISO LEGAL:
-    Esta ferramenta e destinada EXCLUSIVAMENTE para uso em ambientes
+Aviso legal:
+    Esta ferramenta e destinada exclusivamente para uso em ambientes
     autorizados (pentest com permissao, CTFs, labs proprios).
     O uso nao autorizado contra sistemas de terceiros e crime (Lei 12.737/2012).
 """
@@ -74,7 +74,7 @@ theme = Theme({
 
 console = Console(theme=theme)
 
-# (servico, severidade, descricao, [comandos])
+# cada entrada segue o formato: (servico, severidade, descricao, [comandos])
 PORT_INFO = {
     21:    ("FTP",           "critical",
             "Transferencia sem criptografia.",
@@ -205,7 +205,7 @@ PORT_INFO = {
     4444:  ("Shell/MSF",     "critical",
             "Porta associada a shells reversos e Metasploit.",
             [
-                "nc {ip} 4444  # checar shell ativo",
+                "nc {ip} 4444  # checar se ha shell ativo",
                 "nmap -sV {ip} -p 4444",
             ]),
     5432:  ("PostgreSQL",    "critical",
@@ -255,17 +255,17 @@ PORT_INFO = {
     27017: ("MongoDB",       "critical",
             "MongoDB historicamente sem senha por padrao.",
             [
-                "mongo {ip}:27017  # conectar sem senha",
+                "mongo {ip}:27017  # tenta conectar sem senha",
                 "nmap --script mongodb-info,mongodb-databases {ip} -p 27017",
                 "mongosh --host {ip} --port 27017",
             ]),
 }
 
-# Mapa de tecnicas de exploracao por porta
-# Formato: porta -> lista de (tecnica, ferramenta, descricao)
+# tecnicas mapeadas por porta para o modo pentest
+# formato: porta -> lista de (tecnica, ferramenta, descricao)
 EXPLOIT_TECHNIQUES = {
     21: [
-        ("Anonymous Access",   "ftp / nmap",         "Login com usuario 'anonymous' sem senha — comum em servidores mal configurados."),
+        ("Anonymous Access",   "ftp / nmap",         "Login com usuario 'anonymous' sem senha, comum em servidores mal configurados."),
         ("Brute Force",        "Hydra / Medusa",      "Ataque de dicionario nas credenciais FTP com wordlists."),
         ("FTP Bounce Attack",  "nmap",                "Usar o servidor FTP para escanear portas de terceiros via comando PORT."),
         ("Cleartext Sniffing", "Wireshark / tcpdump", "Captura de credenciais em texto puro na rede (protocolo nao criptografado)."),
@@ -277,13 +277,13 @@ EXPLOIT_TECHNIQUES = {
         ("CVE Exploitation",   "Metasploit / searchsploit","Explorar versoes vulneraveis do OpenSSH (ex: CVE-2023-38408)."),
     ],
     23: [
-        ("Cleartext Sniffing", "Wireshark / tcpdump",      "Todo o trafego Telnet e em texto puro, incluindo senha."),
+        ("Cleartext Sniffing", "Wireshark / tcpdump",      "Todo o trafego Telnet e em texto puro, incluindo a senha."),
         ("Brute Force",        "Hydra",                    "Ataque de dicionario direto no Telnet."),
         ("Session Hijacking",  "Ettercap / Bettercap",     "Interceptar e sequestrar sessao Telnet ativa na rede."),
     ],
     25: [
         ("User Enumeration",   "smtp-user-enum / nmap",    "Comandos VRFY e EXPN revelam usuarios validos no servidor."),
-        ("Open Relay",         "swaks / nmap",              "Servidor mal configurado permite envio de e-mail por qualquer um (spam/phishing)."),
+        ("Open Relay",         "swaks / nmap",              "Servidor mal configurado permite envio de e-mail por qualquer um."),
         ("Information Disclosure", "nc / telnet",           "Banner do SMTP revela versao do software e sistema operacional."),
     ],
     53: [
@@ -293,18 +293,18 @@ EXPLOIT_TECHNIQUES = {
         ("DNS Amplification",      "nmap",                     "Checar se o resolver aceita queries recursivas (vetor de DDoS)."),
     ],
     80: [
-        ("SQL Injection (SQLi)",       "sqlmap",                    "Injetar comandos SQL em parametros de formularios e URLs para acessar o banco de dados."),
+        ("SQL Injection (SQLi)",       "sqlmap",                    "Injetar comandos SQL em parametros de formularios e URLs para acessar o banco."),
         ("Cross-Site Scripting (XSS)", "XSStrike / Dalfox",         "Injetar scripts maliciosos em campos de entrada para roubar cookies/sessoes."),
         ("Directory Traversal (LFI)",  "dotdotpwn / wfuzz",         "Navegar fora do diretorio web para ler arquivos do servidor (ex: /etc/passwd)."),
         ("Remote File Inclusion (RFI)","manual / Metasploit",        "Incluir arquivo remoto malicioso para executar codigo no servidor."),
         ("Directory Brute Force",      "gobuster / ffuf / dirsearch","Descobrir diretorios e arquivos ocultos (admin, backup, config)."),
         ("CMS Vulnerabilities",        "WPScan / CMSmap",           "Escanear WordPress, Joomla, Drupal em busca de plugins/temas vulneraveis."),
         ("Command Injection",          "commix",                    "Injetar comandos do SO em campos que passam input para o sistema."),
-        ("Information Disclosure",     "whatweb / nikto",           "Coletar versao do servidor, tecnologias usadas, headers de seguranca ausentes."),
+        ("Information Disclosure",     "whatweb / nikto",           "Coletar versao do servidor, tecnologias usadas e headers ausentes."),
     ],
     443: [
-        ("SQL Injection (SQLi)",       "sqlmap",                    "Mesmo que HTTP — parametros HTTPS tambem sao viaveis para SQLi."),
-        ("SSL/TLS Weaknesses",         "sslscan / testssl.sh",      "Checar Heartbleed, POODLE, BEAST, certificados expirados, cifras fracas."),
+        ("SQL Injection (SQLi)",       "sqlmap",                    "Parametros HTTPS tambem sao viaveis para SQLi, igual ao HTTP."),
+        ("SSL/TLS Weaknesses",         "sslscan / testssl.sh",      "Checar Heartbleed, POODLE, BEAST, certificados expirados e cifras fracas."),
         ("Directory Brute Force",      "gobuster / ffuf",           "Enumerar endpoints e diretorios ocultos na aplicacao HTTPS."),
         ("CMS Vulnerabilities",        "WPScan / CMSmap",           "Escanear CMS em busca de versoes e plugins vulneraveis."),
         ("XSS / CSRF",                 "XSStrike / Burp Suite",     "Injetar scripts ou forjar requisicoes autenticadas."),
@@ -318,7 +318,7 @@ EXPLOIT_TECHNIQUES = {
         ("Null Session",       "rpcclient -U ''",           "Conectar sem credenciais para enumerar informacoes do sistema."),
     ],
     445: [
-        ("EternalBlue (RCE)",  "Metasploit (ms17_010_eternalblue)", "Explorar MS17-010 para execucao remota de codigo sem autenticacao (WannaCry)."),
+        ("EternalBlue (RCE)",  "Metasploit (ms17_010_eternalblue)", "Explorar MS17-010 para execucao remota de codigo sem autenticacao."),
         ("Pass-the-Hash",      "crackmapexec / impacket",            "Usar hash NTLM capturado para autenticar sem a senha em texto puro."),
         ("SMB Brute Force",    "Hydra / crackmapexec",               "Ataque de dicionario nas credenciais SMB/Windows."),
         ("SMB Relay",          "Responder / impacket-ntlmrelayx",    "Interceptar autenticacoes NTLM e reencaminhar para outro host."),
@@ -331,9 +331,9 @@ EXPLOIT_TECHNIQUES = {
         ("Empty Password Check",   "nmap --script ms-sql-empty-password", "Verificar se o usuario 'sa' tem senha em branco."),
     ],
     2049: [
-        ("NFS Mount (Acesso Nao Autorizado)", "showmount / mount",  "Montar compartilhamentos NFS expostos sem autenticacao."),
-        ("UID Spoofing",               "manual",                    "Criar usuario local com mesmo UID dos arquivos NFS para obter acesso."),
-        ("Sensitive File Access",      "nmap / mount",              "Acessar arquivos sensiveis (.ssh, /etc/shadow) via NFS mal configurado."),
+        ("NFS Mount",                 "showmount / mount",  "Montar compartilhamentos NFS expostos sem autenticacao."),
+        ("UID Spoofing",               "manual",             "Criar usuario local com mesmo UID dos arquivos NFS para obter acesso."),
+        ("Sensitive File Access",      "nmap / mount",       "Acessar arquivos sensiveis (.ssh, /etc/shadow) via NFS mal configurado."),
     ],
     3000: [
         ("Directory Brute Force",  "gobuster / ffuf",           "Descobrir rotas e endpoints da API ou app de desenvolvimento."),
@@ -344,7 +344,7 @@ EXPLOIT_TECHNIQUES = {
         ("SQL Injection (SQLi)",   "sqlmap",                    "Explorar SQLi em aplicacoes que usam este MySQL para extrair dados."),
         ("Brute Force",            "Hydra / Medusa",             "Ataque de dicionario no login MySQL (root sem senha e comum)."),
         ("UDF Injection (RCE)",    "Metasploit / manual",       "Criar User Defined Function maliciosa para executar comandos no SO."),
-        ("Empty Password",         "mysql -h {ip} -u root",     "Tentar conexao sem senha — configuracao padrao em muitas instalacoes."),
+        ("Empty Password",         "mysql -h {ip} -u root",     "Tentar conexao sem senha, configuracao padrao em muitas instalacoes."),
     ],
     3389: [
         ("BlueKeep (RCE)",         "Metasploit (cve_2019_0708)","Explorar CVE-2019-0708 para RCE pre-autenticacao no Windows 7/Server 2008."),
@@ -360,19 +360,19 @@ EXPLOIT_TECHNIQUES = {
     ],
     5900: [
         ("Brute Force",            "Hydra / vncrack",           "Ataque de dicionario na senha VNC."),
-        ("No Auth Bypass",         "vncviewer {ip}",             "Alguns servidores VNC antigos nao exigem senha — acesso direto."),
+        ("No Auth Bypass",         "vncviewer {ip}",             "Servidores VNC antigos podem nao exigir senha, acesso direto."),
         ("Screen Capture",         "vncviewer / manual",        "Visualizar e controlar a tela do host remotamente."),
     ],
     6379: [
         ("Unauthenticated Access", "redis-cli -h {ip}",         "Redis sem senha: acesso total ao banco de dados em memoria."),
-        ("Config Overwrite (RCE)", "redis-cli CONFIG SET",      "Alterar config do Redis para escrever chave SSH authorized_keys e obter shell."),
+        ("Config Overwrite (RCE)", "redis-cli CONFIG SET",      "Alterar config do Redis para escrever chave SSH e obter shell."),
         ("Data Exfiltration",      "redis-cli KEYS * / GET",    "Extrair todas as chaves e valores armazenados (tokens, senhas, sessoes)."),
         ("Cron Job Injection",     "redis-cli CONFIG SET dir",  "Escrever cron job malicioso via Redis para execucao no servidor."),
     ],
     8080: [
         ("SQL Injection (SQLi)",   "sqlmap",                    "Testar parametros da aplicacao web em busca de SQLi."),
-        ("Admin Panel Brute Force","Hydra / Burp Suite",        "Tentar credenciais padrao em paineis admin expostos (Tomcat, Jenkins, etc.)."),
-        ("Apache Tomcat RCE",      "Metasploit (tomcat_mgr_upload)", "Fazer upload de WAR malicioso via Tomcat Manager se logado."),
+        ("Admin Panel Brute Force","Hydra / Burp Suite",        "Tentar credenciais padrao em paineis admin (Tomcat, Jenkins, etc.)."),
+        ("Apache Tomcat RCE",      "Metasploit (tomcat_mgr_upload)", "Upload de WAR malicioso via Tomcat Manager se logado."),
         ("Directory Brute Force",  "gobuster / ffuf",           "Enumerar diretorios e endpoints ocultos."),
     ],
     9200: [
@@ -383,7 +383,7 @@ EXPLOIT_TECHNIQUES = {
     27017: [
         ("Unauthenticated Access", "mongo {ip}:27017",          "MongoDB sem senha: acesso total a todos os bancos de dados."),
         ("Data Exfiltration",      "mongosh / mongo",           "Listar e extrair bancos, colecoes e documentos."),
-        ("NoSQL Injection",        "manual / Burp Suite",       "Injetar operadores MongoDB ($where, $gt) em aplicacoes que usam MongoDB."),
+        ("NoSQL Injection",        "manual / Burp Suite",       "Injetar operadores MongoDB ($where, $gt) em aplicacoes vulneraveis."),
     ],
 }
 
@@ -391,6 +391,7 @@ INSTABLE_ON_WORKSTATION = {4444, 6379, 9200, 27017, 2049, 135, 139, 445}
 
 
 def get_local_network() -> str:
+    """Tenta detectar a rede local automaticamente a partir do IP da maquina."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -403,6 +404,7 @@ def get_local_network() -> str:
 
 
 def ping_host(ip: str) -> bool:
+    """Faz um ping simples para checar se o host esta respondendo."""
     try:
         result = subprocess.run(
             ["ping", "-c", "1", "-W", "1", str(ip)],
@@ -415,6 +417,7 @@ def ping_host(ip: str) -> bool:
 
 
 def check_port(ip: str, port: int, timeout: float = 0.8) -> bool:
+    """Tenta abrir uma conexao TCP na porta para ver se esta aberta."""
     try:
         with socket.create_connection((ip, port), timeout=timeout):
             return True
@@ -423,6 +426,7 @@ def check_port(ip: str, port: int, timeout: float = 0.8) -> bool:
 
 
 def resolve_hostname(ip: str) -> str:
+    """Tenta resolver o nome do host a partir do IP."""
     try:
         return socket.gethostbyaddr(ip)[0]
     except Exception:
@@ -430,6 +434,7 @@ def resolve_hostname(ip: str) -> str:
 
 
 def grab_banner(ip: str, port: int, timeout: float = 1.0) -> str:
+    """Conecta na porta e tenta capturar o banner inicial do servico."""
     try:
         with socket.create_connection((ip, port), timeout=timeout) as s:
             s.settimeout(timeout)
@@ -443,7 +448,7 @@ def grab_banner(ip: str, port: int, timeout: float = 1.0) -> str:
 
 
 def nmap_service_scan(ip: str, open_ports: list[int]) -> dict:
-    """Usa python-nmap para detectar versao de servico e OS."""
+    """Roda nmap com deteccao de versao e OS nas portas abertas encontradas."""
     if not HAS_NMAP:
         console.print("  [warning]python-nmap nao instalado. Instale: pip install python-nmap + sudo apt install nmap[/warning]")
         return {}
@@ -475,7 +480,7 @@ def nmap_service_scan(ip: str, open_ports: list[int]) -> dict:
 
 
 def check_cves(service: str, version: str, max_results: int = 3) -> list[dict]:
-    """Consulta CVEs na API publica do NVD."""
+    """Busca CVEs relacionados ao servico e versao na API publica do NVD."""
     if not HAS_REQUESTS:
         return []
     if not service or not version:
@@ -685,7 +690,7 @@ def scan_ports(hosts: list[dict], ports: list[int], pentest_mode: bool = False, 
 
 
 def print_exploit_techniques(findings: list[dict]):
-    """Exibe tabela de tecnicas de exploracao para cada porta aberta."""
+    """Exibe as tecnicas de exploracao mapeadas para cada porta aberta encontrada."""
     section("Tecnicas de exploracao")
 
     console.print("  [info]Use apenas em ambientes autorizados (lab, CTF, pentest com permissao).[/info]\n")
@@ -708,7 +713,7 @@ def print_exploit_techniques(findings: list[dict]):
                 continue
 
             svc = f["service"]
-            console.print(f"\n  [label]Porta {port} — {svc}[/label]")
+            console.print(f"\n  [label]Porta {port} ({svc})[/label]")
 
             tbl = Table(box=box.SIMPLE, padding=(0, 1), show_header=True)
             tbl.add_column("Tecnica",     style="technique",  width=30)
@@ -725,7 +730,7 @@ def print_exploit_techniques(findings: list[dict]):
 
 
 def print_pentest_hints(findings: list[dict]):
-    """Exibe comandos prontos de pentest para cada porta aberta encontrada."""
+    """Exibe os comandos prontos para cada porta aberta, agrupados por host."""
     section("Comandos de pentest")
 
     if not findings:
@@ -761,18 +766,21 @@ def detect_anomalies(hosts: list[dict], findings: list[dict]):
 
     found = False
 
+    # host com muitas portas abertas pode ser um servidor ou estar mal configurado
     port_count = Counter(f["ip"] for f in findings)
     for ip, count in port_count.items():
         if count > 8:
             console.print(f"  [suspect]{ip}[/suspect] [info]tem {count} portas abertas.[/info]")
             found = True
 
+    # portas de dev ativas em producao sao um sinal de alerta
     dev_ports = {3000, 8080, 4000, 5000, 8888}
     for f in findings:
         if f["port"] in dev_ports:
             console.print(f"  [warning]{f['ip']}:{f['port']}[/warning] [info]Porta de desenvolvimento ativa em producao.[/info]")
             found = True
 
+    # multiplos bancos expostos no mesmo host e incomum e preocupante
     db_ports = {3306, 5432, 1433, 27017, 6379, 9200}
     db_per_host: dict[str, list] = {}
     for f in findings:
@@ -784,6 +792,7 @@ def detect_anomalies(hosts: list[dict], findings: list[dict]):
             console.print(f"  [critical]{ip}[/critical] [info]tem {len(dbs)} bancos de dados expostos ({ports_str}).[/info]")
             found = True
 
+    # SSH e Telnet abertos juntos indica configuracao inconsistente
     for ip in set(f["ip"] for f in findings):
         host_ports = {f["port"] for f in findings if f["ip"] == ip}
         if 22 in host_ports and 23 in host_ports:
